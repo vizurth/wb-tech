@@ -17,6 +17,5 @@ func NewConfig() (Config, error) {
 			return Config{}, err
 		}
 	}
-	``
 	return config, nil
 }

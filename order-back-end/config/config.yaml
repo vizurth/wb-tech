@@ -1,1 +1,9 @@
-package config
+postgres:
+  host: "localhost"
+  port: 8080
+  username: "order-user"
+  password: "order-password"
+  database: "order"
+
+http:
+  port: 50051
