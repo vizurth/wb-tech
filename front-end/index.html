@@ -53,7 +53,9 @@
             }
 
             try {
-                const res = await fetch(`/order/${encodeURIComponent(orderId)}`);
+                const API_HOST = window.location.hostname === 'localhost' ? 'localhost' : 'order-service';
+                const res = await fetch(`http://${API_HOST}:8081/order/${encodeURIComponent(orderId)}`);
+
                 if (!res.ok) {
                     resultDiv.textContent = `Ошибка: ${res.status} ${res.statusText}`;
                     return;
