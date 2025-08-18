@@ -1,9 +1,10 @@
 package config
 
 import (
-	"github.com/ilyakaznacheev/cleanenv"
 	kfk "order-back-end/internal/kafka/config"
 	"order-back-end/internal/postgres"
+
+	"github.com/ilyakaznacheev/cleanenv"
 )
 
 // httpConfig структура которая содержит порт для подключения по HTTP

@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 	"net/http"
 	"order-back-end/internal/cache"
 	"order-back-end/internal/config"
@@ -16,6 +13,10 @@ import (
 	"order-back-end/internal/postgres"
 	repo "order-back-end/internal/repository"
 	serv "order-back-end/internal/service"
+
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -62,7 +63,7 @@ func main() {
 		}
 	}()
 
-	router := gin.Default() // создаём новый gin router
+	router := gin.Default()          // создаём новый gin router
 	router.Use(cors.New(cors.Config{ // настраиваем cors для фронтенда
 		AllowOrigins:     []string{"http://localhost:8080"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
