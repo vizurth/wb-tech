@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -61,7 +62,7 @@ func main() {
 		}
 	}()
 
-	router := gin.Default()          // создаём новый gin router
+	router := gin.Default() // создаём новый gin router
 	router.Use(cors.New(cors.Config{ // настраиваем cors для фронтенда
 		AllowOrigins:     []string{"http://localhost:8080"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
