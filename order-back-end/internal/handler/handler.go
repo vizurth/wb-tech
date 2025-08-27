@@ -12,11 +12,11 @@ import (
 type OrderHandler struct {
 	service *order.OrderService
 	router  *gin.Engine
-	cache   *cache.Cache
+	cache   cache.Cache
 }
 
 // NewHandler создает экземпляр OrderHandler
-func NewHandler(service *order.OrderService, router *gin.Engine, cache *cache.Cache) *OrderHandler {
+func NewHandler(service *order.OrderService, router *gin.Engine, cache cache.Cache) *OrderHandler {
 	return &OrderHandler{
 		service: service,
 		router:  router,

@@ -8,11 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type Repo interface {
+	GetAllOrders(ctx context.Context) ([]model.OrderInfo, error)
+	GetOrderFromDB(ctx context.Context, orderID string) (*model.OrderInfo, error)
+}
+
 // OrderRepo репозиторий, часть слоистой архитектуры
 type OrderRepo struct {
 	db   *pgxpool.Pool
 	psql sq.StatementBuilderType
 }
+
+var _ Repo = (*OrderRepo)(nil)
 
 // NewRepository создаем экземпляр репозитория
 func NewRepository(db *pgxpool.Pool) *OrderRepo {

@@ -10,17 +10,17 @@ import (
 
 // OrderService часть слоистой архитектуры
 type OrderService struct {
-	repository *order.OrderRepo
+	repository order.Repo
 }
 
 // NewOrderService создаем экземпляр класса
-func NewOrderService(repository *order.OrderRepo) *OrderService {
+func NewOrderService(repository order.Repo) *OrderService {
 	return &OrderService{
 		repository: repository,
 	}
 }
 
-func (s *OrderService) GetOrderFromDB(ctx context.Context, orderID string, cache *cache.Cache) (*model.OrderInfo, error) {
+func (s *OrderService) GetOrderFromDB(ctx context.Context, orderID string, cache cache.Cache) (*model.OrderInfo, error) {
 	fmt.Println("GetOrderFromDB: ", orderID)
 	if cachedOrder, ok := cache.Get(orderID); ok {
 		return &cachedOrder, nil

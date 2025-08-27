@@ -2,11 +2,11 @@ package kfk
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"order-back-end/internal/cache"
 	"order-back-end/internal/logger"
 	"order-back-end/internal/model"
+	"order-back-end/internal/validator"
 
 	"github.com/IBM/sarama"
 	sq "github.com/Masterminds/squirrel"
@@ -17,11 +17,11 @@ import (
 // Consumer дополненая структура с db и cache
 type Consumer struct {
 	db    *pgxpool.Pool
-	cache *cache.Cache
+	cache cache.Cache
 }
 
 // NewConsumer создаем экземпляр Consumer куда прокидывыем db и cache
-func NewConsumer(db *pgxpool.Pool, cache *cache.Cache) *Consumer {
+func NewConsumer(db *pgxpool.Pool, cache cache.Cache) *Consumer {
 	return &Consumer{
 		db:    db,
 		cache: cache,
@@ -42,16 +42,14 @@ func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
 func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for message := range claim.Messages() {
 		var msg model.OrderInfo
-		if err := json.Unmarshal(message.Value, &msg); err != nil {
-			fmt.Printf("Error unmarshalling message: %s\n", err)
-			continue
+		err := validator.ValidateOrderInfo(message.Value, &msg)
+		if err != nil {
+			fmt.Printf("Error validating message: %s\n", err)
+			return err
 		}
 
 		// Сохраняем в кэш
-		consumer.cache.Mu.Lock()
-		consumer.cache.Orders[msg.OrderUID] = msg
-		consumer.cache.Mu.Unlock()
-
+		consumer.cache.Set(msg.OrderUID, msg)
 		fmt.Println(msg.OrderUID)
 
 		ctx := context.Background()
@@ -169,7 +167,7 @@ func (consumer *Consumer) subscribe(ctx context.Context, topic string, consumerG
 	go func() {
 		for {
 			if err := consumerGroup.Consume(ctx, []string{topic}, consumer); err != nil {
-				fmt.Println("Error from consumerGroup: %s\n", err)
+				fmt.Printf("Error from consumerGroup: %s\n\n", err)
 			}
 			if ctx.Err() != nil {
 				logger.GetLoggerFromCtx(ctx).Error(ctx, "Error from consumerGroup.Consume()")
