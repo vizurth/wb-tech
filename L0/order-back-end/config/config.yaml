@@ -1,0 +1,17 @@
+postgres:
+  host: "postgres"
+  port: 5432
+  username: "order-user"
+  password: "order-password"
+  database: "order"
+
+http:
+  port: 8081
+
+kafka:
+  brokers:
+    - "kafka-1:9092"
+    - "kafka-2:9092"
+    - "kafka-3:9092"
+  topic: "orders"
+  group_id: "order-service"

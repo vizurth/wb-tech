@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Заказы</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+        }
+        #result {
+            white-space: pre-wrap;
+            background: #f8f8f8;
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-top: 20px;
+        }
+        label {
+            font-weight: bold;
+        }
+        input, button {
+            padding: 8px;
+            margin-top: 5px;
+        }
+        button {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Поиск заказа</h1>
+    <label for="orderId">Введите ID заказа:</label><br>
+    <input type="text" id="orderId" placeholder="order_uid" />
+    <button onclick="fetchOrder()">Получить данные</button>
+
+    <div id="result"></div>
+
+    <script>
+        async function fetchOrder() {
+            const orderId = document.getElementById('orderId').value.trim();
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = 'Загрузка...';
+
+            if (!orderId) {
+                resultDiv.textContent = 'Введите ID заказа';
+                return;
+            }
+
+            try {
+                const API_HOST = window.location.hostname === 'localhost' ? 'localhost' : 'order-service';
+                const res = await fetch(`http://${API_HOST}:8081/order/${encodeURIComponent(orderId)}`);
+
+                if (!res.ok) {
+                    resultDiv.textContent = `Ошибка: ${res.status} ${res.statusText}`;
+                    return;
+                }
+
+                const data = await res.json();
+                resultDiv.textContent = JSON.stringify(data, null, 2);
+            } catch (err) {
+                resultDiv.textContent = 'Ошибка запроса: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>
