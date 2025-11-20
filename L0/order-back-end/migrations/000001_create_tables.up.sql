@@ -1,4 +1,3 @@
--- +goose Up
 CREATE TABLE orders (
     order_uid         VARCHAR(64) PRIMARY KEY,
     track_number      VARCHAR(64) NOT NULL,
@@ -24,20 +23,6 @@ CREATE TABLE deliveries (
     email        VARCHAR(255)
 );
 
-CREATE TABLE payments (
-    transaction    VARCHAR(64) PRIMARY KEY,
-    order_uid      VARCHAR(64) REFERENCES orders(order_uid) ON DELETE CASCADE,
-    request_id     VARCHAR(64),
-    currency       VARCHAR(8),
-    provider       VARCHAR(64),
-    amount         INT,
-    payment_dt     BIGINT,
-    bank           VARCHAR(64),
-    delivery_cost  INT,
-    goods_total    INT,
-    custom_fee     INT
-);
-
 CREATE TABLE items (
     id            SERIAL PRIMARY KEY,
     order_uid     VARCHAR(64) REFERENCES orders(order_uid) ON DELETE CASCADE,
@@ -54,8 +39,16 @@ CREATE TABLE items (
     status        INT
 );
 
--- +goose Down
-DROP TABLE IF EXISTS items;
-DROP TABLE IF EXISTS payments;
-DROP TABLE IF EXISTS deliveries;
-DROP TABLE IF EXISTS orders;
+CREATE TABLE payments (
+    transaction    VARCHAR(64) PRIMARY KEY,
+    order_uid      VARCHAR(64) REFERENCES orders(order_uid) ON DELETE CASCADE,
+    request_id     VARCHAR(64),
+    currency       VARCHAR(8),
+    provider       VARCHAR(64),
+    amount         INT,
+    payment_dt     BIGINT,
+    bank           VARCHAR(64),
+    delivery_cost  INT,
+    goods_total    INT,
+    custom_fee     INT
+);

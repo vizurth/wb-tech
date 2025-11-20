@@ -26,7 +26,7 @@ import (
 func main() {
 	ctx := context.Background() // создаём базовый контекст
 
-	ctx, err := logger.New(ctx) // инициализируем логгер
+	ctx, _, err := logger.New(ctx) // инициализируем логгер
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -40,8 +40,11 @@ func main() {
 	if err != nil {
 		logger.GetLoggerFromCtx(ctx).Fatal(ctx, "postgres.New error", zap.Error(err))
 	}
-	db.Ping(ctx)     // проверяем соединение с базой
-	defer db.Close() // закрываем базу при выходе
+
+	err = postgres.Migrate(ctx, cfg.Postgres) // выполняем миграции
+	if err != nil {
+		logger.GetLoggerFromCtx(ctx).Fatal(ctx, "postgres.Migrate error", zap.Error(err))
+	}
 
 	cacheIn := cache.NewCache(time.Duration(time.Minute*20), 40) // создаём кэш для хранения заказов
 
@@ -56,16 +59,9 @@ func main() {
 		cacheIn.Set(orderElem.OrderUID, orderElem)
 	}
 
-	kafkaConsumer := consumer.NewConsumer(db, cacheIn) // создаём консьюмера для kafka
-
 	go producer.StartProducer(ctx, cfg.Kafka.Brokers, cfg.Kafka.Topic) // запускаем продьюсера в отдельной горутине
 
-	go func() { // запускаем консьюмера в отдельной горутине
-		err = kafkaConsumer.StartConsuming(ctx, cfg.Kafka.Brokers, cfg.Kafka.GroupID, cfg.Kafka.Topic)
-		if err != nil {
-			logger.GetLoggerFromCtx(ctx).Fatal(ctx, "consumer.StartConsuming error", zap.Error(err))
-		}
-	}()
+	go consumer.StartConsuming(ctx, cfg.Kafka.Brokers, cfg.Kafka.GroupID, cfg.Kafka.Topic, db, cacheIn)
 
 	router := gin.Default()          // создаём новый gin router
 	router.Use(cors.New(cors.Config{ // настраиваем cors для фронтенда

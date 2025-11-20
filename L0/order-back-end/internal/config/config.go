@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	kfk "order-back-end/internal/kafka/config"
 	"order-back-end/internal/postgres"
+	"os"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
@@ -20,12 +22,31 @@ type Config struct {
 }
 
 // NewConfig создает Config
-func NewConfig() (Config, error) {
-	var config Config
-	if err := cleanenv.ReadConfig("./config/config.yaml", &config); err != nil {
-		if err = cleanenv.ReadEnv(&config); err != nil {
-			return Config{}, err
+func NewConfig() (*Config, error) {
+	var cfg Config
+
+	// Ищем config.yaml в нескольких местах для совместимости с тестами и Docker
+	configPaths := []string{
+		"./configs/config.yaml",
+		"configs/config.yaml",
+		"../configs/config.yaml",
+		"../../configs/config.yaml",
+	}
+
+	var configPath string
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			configPath = path
+			break
 		}
 	}
-	return config, nil
+
+	if configPath == "" {
+		return &Config{}, fmt.Errorf("config file not found")
+	}
+
+	if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
+		return &Config{}, fmt.Errorf("error reading config: %w", err)
+	}
+	return &cfg, nil
 }

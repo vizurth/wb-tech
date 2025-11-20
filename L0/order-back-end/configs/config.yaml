@@ -4,6 +4,8 @@ postgres:
   username: "order-user"
   password: "order-password"
   database: "order"
+  max_conns: 10
+  min_conns: 5
 
 http:
   port: 8081

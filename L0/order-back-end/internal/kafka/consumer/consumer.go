@@ -7,80 +7,125 @@ import (
 	"order-back-end/internal/logger"
 	"order-back-end/internal/model"
 	"order-back-end/internal/validator"
+	"strings"
 
-	"github.com/IBM/sarama"
 	sq "github.com/Masterminds/squirrel"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 )
 
 // Consumer дополненая структура с db и cache
 type Consumer struct {
-	db    *pgxpool.Pool
-	cache cache.Cache
+	consumer       *kafka.Consumer
+	db             *pgxpool.Pool
+	cache          cache.Cache
+	stop           bool
+	consumerNumber int
 }
 
 // NewConsumer создаем экземпляр Consumer куда прокидывыем db и cache
-func NewConsumer(db *pgxpool.Pool, cache cache.Cache) *Consumer {
+func NewConsumer(brokers []string, topic, consumerGroup string, db *pgxpool.Pool, cache cache.Cache, consInt int) (*Consumer, error) {
+	cfg := &kafka.ConfigMap{
+		"bootstrap.servers":        strings.Join(brokers, ","),
+		"group.id":                 consumerGroup,
+		"enable.auto.offset.store": false,
+		"enable.auto.commit":       true,
+		"auto.commit.interval.ms":  5000,
+		"auto.offset.reset":        "earliest",
+	}
+
+	c, err := kafka.NewConsumer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("error creating kafka consumer: %w", err)
+	}
+
+	err = c.Subscribe(topic, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to topic %s: %w", topic, err)
+	}
+
 	return &Consumer{
-		db:    db,
-		cache: cache,
+		consumer:       c,
+		db:             db,
+		cache:          cache,
+		stop:           false,
+		consumerNumber: consInt,
+	}, nil
+}
+
+func (c *Consumer) Start() {
+	ctx := context.Background()
+	log := logger.GetOrCreateLoggerFromCtx(ctx)
+	for {
+		if c.stop {
+			break
+		}
+		kafkaMsg, err := c.consumer.ReadMessage(-1)
+		if err != nil {
+			log.Error(ctx, fmt.Sprintf("Error reading message from consumer: %v", err))
+		}
+		if kafkaMsg == nil {
+			continue
+		}
+		if err = c.prepareMessage(kafkaMsg); err != nil {
+			log.Error(ctx, fmt.Sprintf("Error to transwer message to db from consumer: %v", err))
+			continue
+		}
+		// сохраняем offset сообщения
+		if _, err := c.consumer.StoreMessage(kafkaMsg); err != nil {
+			log.Error(ctx, fmt.Sprintf("Error storing message in consumer: %v", err))
+			continue
+		}
 	}
 }
 
-// Setup функция для имплементации интерфейса
-func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
-	return nil
+func (c *Consumer) Stop() error {
+	c.stop = true
+	// вручную коммитим то что сами не успели закоммитить это делать сама kafka
+	if _, err := c.consumer.Commit(); err != nil {
+		return err
+	}
+	return c.consumer.Close()
 }
 
-// Cleanup функция для имплементации интерфейса
-func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
-	return nil
-}
-
-// ConsumeClaim принимаем сообщение из продюсера
-func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	for message := range claim.Messages() {
-		var msg model.OrderInfo
-		err := validator.ValidateOrderInfo(message.Value, &msg)
-		if err != nil {
-			fmt.Printf("Error validating message: %s\n", err)
-			return err
-		}
-
-		// Сохраняем в кэш
-		consumer.cache.Set(msg.OrderUID, msg)
-		fmt.Println(msg.OrderUID)
-
-		ctx := context.Background()
-
-		// начинаем транзакцию
-		tx, err := consumer.db.BeginTx(ctx, pgx.TxOptions{
-			IsoLevel:   pgx.ReadCommitted,
-			AccessMode: pgx.ReadWrite,
-		})
-		if err != nil {
-			fmt.Printf("Failed to start transaction: %s\n", err)
-			continue
-		}
-
-		// подготавливаем транзакцию
-		if err := consumer.processMessage(ctx, tx, msg); err != nil {
-			fmt.Printf("Failed to process message: %s\n", err)
-			tx.Rollback(ctx)
-			continue
-		}
-
-		// коммитим транзакцию
-		if err := tx.Commit(ctx); err != nil {
-			fmt.Printf("Failed to commit transaction: %s\n", err)
-			continue
-		}
-
-		// подтверждаем брокер
-		session.MarkMessage(message, "")
+func (c *Consumer) prepareMessage(kafkaMsg *kafka.Message) (err error) {
+	var msg model.OrderInfo
+	err = validator.ValidateOrderInfo(kafkaMsg.Value, &msg)
+	if err != nil {
+		fmt.Printf("Error validating message: %s\n", err)
+		return err
 	}
 
+	// Сохраняем в кэш
+	c.cache.Set(msg.OrderUID, msg)
+	fmt.Println(msg.OrderUID)
+
+	ctx := context.Background()
+
+	// начинаем транзакцию
+	tx, err := c.db.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.ReadCommitted,
+		AccessMode: pgx.ReadWrite,
+	})
+	if err != nil {
+		fmt.Printf("Failed to start transaction: %s\n", err)
+		return nil
+	}
+
+	// подготавливаем транзакцию
+	if err := c.processMessage(ctx, tx, msg); err != nil {
+		fmt.Printf("Failed to process message: %s\n", err)
+		tx.Rollback(ctx)
+		return nil
+	}
+
+	// коммитим транзакцию
+	if err := tx.Commit(ctx); err != nil {
+		fmt.Printf("Failed to commit transaction: %s\n", err)
+		return nil
+	}
 	return nil
 }
 
@@ -161,36 +206,22 @@ func insertItems(ctx context.Context, tx pgx.Tx, msg model.OrderInfo) error {
 	return nil
 }
 
-// subscribe подписываемся на consumer
-func (consumer *Consumer) subscribe(ctx context.Context, topic string, consumerGroup sarama.ConsumerGroup) error {
-
-	go func() {
-		for {
-			if err := consumerGroup.Consume(ctx, []string{topic}, consumer); err != nil {
-				fmt.Printf("Error from consumerGroup: %s\n\n", err)
-			}
-			if ctx.Err() != nil {
-				logger.GetLoggerFromCtx(ctx).Error(ctx, "Error from consumerGroup.Consume()")
-				return
-			}
-		}
-	}()
-
-	return nil
-}
-
 // StartConsuming начинаем прослушку
-func (consumer *Consumer) StartConsuming(ctx context.Context, brokers []string, groupID, topic string) error {
-	config := sarama.NewConfig()
-
-	config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
-	config.Consumer.Offsets.Initial = sarama.OffsetOldest
-
-	consumerGrop, err := sarama.NewConsumerGroup(brokers, groupID, config)
-
+func StartConsuming(ctx context.Context, brokers []string, groupID, topic string, db *pgxpool.Pool, cache cache.Cache) {
+	log := logger.GetOrCreateLoggerFromCtx(ctx)
+	c1, err := NewConsumer(brokers, topic, "my-consumer-group", db, cache, 1)
 	if err != nil {
-		return err
+		log.Error(ctx, "error creating consumer", zap.Error(err))
 	}
-
-	return consumer.subscribe(ctx, topic, consumerGrop)
+	c2, err := NewConsumer(brokers, topic, "my-consumer-group", db, cache, 2)
+	if err != nil {
+		log.Error(ctx, "error creating consumer", zap.Error(err))
+	}
+	c3, err := NewConsumer(brokers, topic, "my-consumer-group", db, cache, 3)
+	if err != nil {
+		log.Error(ctx, "error creating consumer", zap.Error(err))
+	}
+	go c1.Start()
+	go c2.Start()
+	go c3.Start()
 }

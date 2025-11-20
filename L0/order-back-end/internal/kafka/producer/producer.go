@@ -3,52 +3,76 @@ package kfk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math/rand"
 	"order-back-end/internal/logger"
 	"order-back-end/internal/model"
+	"strings"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/brianvoe/gofakeit"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/hashicorp/go-uuid"
-	"go.uber.org/zap"
 )
 
 const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-// newSyncProducer создаем синхронного продюсера
-func newSyncProducer(brokers []string) (sarama.SyncProducer, error) {
-	config := sarama.NewConfig()
-	config.Producer.Partitioner = sarama.NewRandomPartitioner
-	config.Producer.RequiredAcks = sarama.WaitForLocal
-	config.Producer.Return.Successes = true
-	config.Producer.MaxMessageBytes = 10 * 1024 * 1024
-	producer, err := sarama.NewSyncProducer(brokers, config)
+var errUnknownType = errors.New("unknown type")
 
-	return producer, err
+const (
+	flushTimeout = 5000
+)
+
+type Producer struct {
+	producer *kafka.Producer
 }
 
-// newAsyncProducer создаем асинхронного продюсера
-func newAsyncProducer(brokers []string) (sarama.AsyncProducer, error) {
-	config := sarama.NewConfig()
-	config.Producer.Partitioner = sarama.NewRandomPartitioner
-	config.Producer.RequiredAcks = sarama.WaitForLocal
-	config.Producer.Return.Successes = true
-	config.Producer.MaxMessageBytes = 10 * 1024 * 1024
-	producer, err := sarama.NewAsyncProducer(brokers, config)
-
-	return producer, err
-}
-
-// prepareMessage подготавливаем сообщение к отправке
-func prepareMessage(topic string, message []byte) *sarama.ProducerMessage {
-	msg := &sarama.ProducerMessage{
-		Topic:     topic,
-		Partition: -1,
-		Value:     sarama.ByteEncoder(message),
+func NewProducer(brokers []string) (*Producer, error) {
+	conf := &kafka.ConfigMap{
+		"bootstrap.servers": strings.Join(brokers, ","),
 	}
-	return msg
+	p, err := kafka.NewProducer(conf)
+	if err != nil {
+		return nil, fmt.Errorf("error creating kafka producer: %w", err)
+	}
+	return &Producer{producer: p}, nil
+}
+
+func (p *Producer) Produce(topic string) error {
+	ctx := context.Background()
+	log := logger.GetOrCreateLoggerFromCtx(ctx)
+	order := generateOrder()
+	orderJson, err := json.Marshal(order)
+	if err != nil {
+		return err
+	}
+	kafkaMsg := &kafka.Message{
+		TopicPartition: kafka.TopicPartition{
+			Topic:     &topic,
+			Partition: kafka.PartitionAny,
+		},
+		Value: orderJson,
+		Key:   nil,
+	}
+	kafkaChan := make(chan kafka.Event)
+	if err = p.producer.Produce(kafkaMsg, kafkaChan); err != nil {
+		return fmt.Errorf("kafka producer error: %w", err)
+	}
+	e := <-kafkaChan
+	switch ev := e.(type) {
+	case *kafka.Message:
+		log.Info(ctx, fmt.Sprintf("message to topic: %v", kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}))
+		return nil
+	case kafka.Error:
+		return ev
+	default:
+		return errUnknownType
+	}
+}
+
+func (p *Producer) Close() {
+	p.producer.Flush(flushTimeout)
+	p.producer.Close()
 }
 
 // randomString генерируем строку
@@ -126,50 +150,16 @@ func generateOrder() model.OrderInfo {
 
 // StartProducer начинаем отправку сообщений
 func StartProducer(ctx context.Context, brokers []string, topic string) {
-	syncProducer, err := newSyncProducer(brokers)
+	p, err := NewProducer(brokers)
+	log := logger.GetOrCreateLoggerFromCtx(ctx)
 	if err != nil {
-		logger.GetLoggerFromCtx(ctx).Fatal(ctx, "Error creating sync producer", zap.Error(err))
+		log.Info(ctx, "error creating kafka producer")
 	}
-
-	asyncProducer, err := newAsyncProducer(brokers)
-
-	if err != nil {
-		logger.GetLoggerFromCtx(ctx).Fatal(ctx, "Failed to create async producer", zap.Error(err))
-	}
-
-	go func() {
-		for err = range asyncProducer.Errors() {
-			logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to produce message", zap.Error(err))
-		}
-	}()
-
-	go func() {
-		for succ := range asyncProducer.Successes() {
-			logger.GetLoggerFromCtx(ctx).Info(ctx, "Successfully produced message", zap.Any("message", succ.Topic))
-		}
-	}()
-
 	for {
-		oi := generateOrder()
-
-		oiJson, err := json.Marshal(oi)
-		if err != nil {
-			logger.GetLoggerFromCtx(ctx).Fatal(ctx, "Failed to marshal order info", zap.Error(err))
+		if err := p.Produce(topic); err != nil {
+			log.Info(ctx, "error producing message")
 		}
-
-		msg := prepareMessage(topic, oiJson)
-
-		if rand.Int()%2 == 0 {
-			partition, offset, err := syncProducer.SendMessage(msg)
-			if err != nil {
-				fmt.Printf("Msg sync err: %v\n", err)
-			} else {
-				fmt.Printf("Msg written sync. Patrition: %d. Ossfet: %d\n", partition, offset)
-			}
-		} else {
-			asyncProducer.Input() <- msg
-		}
-
+		log.Info(ctx, "message produced")
 		time.Sleep(10 * time.Second)
 	}
 }
